@@ -43,12 +43,23 @@ class LongSelectHandler extends xb.Script {
     }
     onSelectStart(event) {
         const inputSource = event.target.inputSource;
-        if (inputSource && inputSource.handedness) {
+        if (inputSource?.handedness && inputSource.handedness !== 'none') {
             this.activeHandedness = inputSource.handedness;
         }
         else {
-            console.warn('Could not determine handedness from onSelectStart event.');
-            this.activeHandedness = null;
+            // No handedness in the event (e.g. mouse/gaze in simulator).
+            // Fall back to whichever hand currently has a tracked index tip.
+            const hands = xb.core?.input?.hands;
+            if (hands?.[1]?.joints?.['index-finger-tip']) {
+                this.activeHandedness = 'right';
+            }
+            else if (hands?.[0]?.joints?.['index-finger-tip']) {
+                this.activeHandedness = 'left';
+            }
+            else {
+                // No hand tracking available — long-pinch gesture won't fire.
+                this.activeHandedness = null;
+            }
         }
     }
     onSelecting() {

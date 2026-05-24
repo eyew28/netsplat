@@ -302,6 +302,10 @@ class NetsplatSample extends NetSample {
           fileName: i === 0 ? file.name : null,
           data: base64.slice(i * SPLAT_CHUNK_SIZE, (i + 1) * SPLAT_CHUNK_SIZE),
         });
+        // Yield every 16 chunks so the WebRTC data-channel send buffer can
+        // drain. Without this, a tight loop of 100+ chunks overflows the
+        // buffer and messages are silently dropped on the receiver's side.
+        if (i % 16 === 15) await new Promise(r => setTimeout(r, 0));
       }
     } finally {
       btn.textContent = originalLabel;
@@ -316,6 +320,8 @@ class NetsplatSample extends NetSample {
       this._pendingTransfers.set(p.id, transfer);
     }
     if (p.fileName) transfer.fileName = p.fileName;
+    // Guard against duplicate delivery (e.g. transport retransmits).
+    if (transfer.chunks[p.index] !== undefined) return;
     transfer.chunks[p.index] = p.data;
     transfer.received++;
     if (transfer.received === transfer.total) {
@@ -350,7 +356,14 @@ class NetsplatSample extends NetSample {
       if (m?.parent) xb.scene.remove(m);
     }
     mesh.position.set(0, -0.15, 0);
-    mesh.quaternion.identity();
+    // PLY and Splat formats store geometry in Y-down convention; rotate 180°
+    // around X to bring them upright. SPZ is already Y-up so no flip needed.
+    const ext = fileName?.split('.').pop()?.toLowerCase();
+    if (ext === 'ply' || ext === 'splat' || ext === 'ksplat') {
+      mesh.quaternion.set(1, 0, 0, 0); // 180° X rotation, matches CDN assets
+    } else {
+      mesh.quaternion.identity();
+    }
     mesh.scale.set(1.3, 1.3, 1.3);
     this.splatMeshes[this.currentIndex] = mesh;
     xb.add(mesh);
