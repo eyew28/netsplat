@@ -248,7 +248,7 @@ class NetsplatSample extends NetSample {
   _buildLoadSplatButton() {
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = '.ply,.spz,.splat,.ksplat';
+    fileInput.accept = '.ply,.spz,.splat,.ksplat,.sog';
     fileInput.style.display = 'none';
     document.body.appendChild(fileInput);
 
@@ -359,7 +359,7 @@ class NetsplatSample extends NetSample {
     // PLY and Splat formats store geometry in Y-down convention; rotate 180°
     // around X to bring them upright. SPZ is already Y-up so no flip needed.
     const ext = fileName?.split('.').pop()?.toLowerCase();
-    if (ext === 'ply' || ext === 'splat' || ext === 'ksplat') {
+    if (ext === 'ply' || ext === 'splat' || ext === 'ksplat' || ext === 'sog') {
       mesh.quaternion.set(1, 0, 0, 0); // 180° X rotation, matches CDN assets
     } else {
       mesh.quaternion.identity();
