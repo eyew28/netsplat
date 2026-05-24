@@ -162,14 +162,27 @@ class NetsplatSample extends NetSample {
     super.update(time, frame);
     this._stepBursts();
     this._updateFade(xb.getDeltaTime());
-    if (frame) this._updateVRLocomotion(frame);
+    this._updateVRLocomotion();
   }
 
-  _updateVRLocomotion(frame) {
+  _updateVRLocomotion() {
+    // Only run inside an active immersive XR session.
+    const xr = xb.core?.renderer?.xr;
+    if (!xr?.isPresenting) return;
+
     const dt = xb.getDeltaTime();
     if (!dt) return;
-    const cam = xb.core?.camera;
-    if (!cam) return;
+
+    // In Three.js WebXR the renderer adds the ArrayCamera as a child of the
+    // scene's regular camera (the rig). Moving the rig is the correct way to
+    // achieve locomotion without fighting the headset's tracking system.
+    const xrCam = xr.getCamera?.();
+    const rig = xrCam?.parent ?? xb.core?.camera;
+    if (!rig) return;
+
+    // Read thumbstick axes from every live XR input source.
+    const session = xr.getSession?.();
+    if (!session) return;
 
     const DEAD = 0.15;
     const SNAP_THRESHOLD = 0.7;
@@ -179,14 +192,14 @@ class NetsplatSample extends NetSample {
 
     let moveX = 0, moveY = 0, rawSnapX = 0;
 
-    for (const source of frame.session.inputSources) {
+    for (const source of session.inputSources) {
       const gp = source.gamepad;
       if (!gp?.axes) continue;
       const ax = gp.axes;
-      // WebXR standard thumbstick: axes[2]=X, axes[3]=Y.
-      // Fall back to axes[0/1] for touchpad-only controllers (e.g. Vive Wand).
-      const stickX = Math.abs(ax[2] ?? 0) > 0.05 ? (ax[2] ?? 0) : (ax[0] ?? 0);
-      const stickY = Math.abs(ax[3] ?? 0) > 0.05 ? (ax[3] ?? 0) : (ax[1] ?? 0);
+      // WebXR "xr-standard" mapping: thumbstick → axes[2] (X) and axes[3] (Y).
+      // Some older/3DOF controllers put the touchpad at axes[0/1] instead.
+      const stickX = ax.length > 2 ? (ax[2] ?? 0) : (ax[0] ?? 0);
+      const stickY = ax.length > 3 ? (ax[3] ?? 0) : (ax[1] ?? 0);
 
       if (source.handedness === 'left') {
         moveX = Math.abs(stickX) > DEAD ? stickX : 0;
@@ -198,22 +211,25 @@ class NetsplatSample extends NetSample {
 
     // Smooth movement: left thumbstick → walk in head-facing direction.
     if (moveX || moveY) {
+      // Use the XR camera's world direction so movement always follows where
+      // the user's head is pointing (horizontally).
       const fwd = new THREE.Vector3();
-      cam.getWorldDirection(fwd);
+      xrCam.getWorldDirection(fwd);
       fwd.y = 0;
       if (fwd.lengthSq() > 0.001) fwd.normalize();
       const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-      cam.position.addScaledVector(fwd, -moveY * MOVE_SPEED * dt);
-      cam.position.addScaledVector(right, moveX * MOVE_SPEED * dt);
+      rig.position.addScaledVector(fwd, -moveY * MOVE_SPEED * dt);
+      rig.position.addScaledVector(right, moveX * MOVE_SPEED * dt);
     }
 
     // Snap turn: right thumbstick → 30° per flick with cooldown.
     this._vrSnapCooldown -= dt;
     if (Math.abs(rawSnapX) > SNAP_THRESHOLD && this._vrSnapCooldown <= 0) {
-      cam.rotateY(rawSnapX < 0 ? SNAP_ANGLE : -SNAP_ANGLE);
+      rig.rotateOnWorldAxis(new THREE.Vector3(0, 1, 0),
+        rawSnapX < 0 ? SNAP_ANGLE : -SNAP_ANGLE);
       this._vrSnapCooldown = SNAP_COOLDOWN;
     } else if (Math.abs(rawSnapX) <= SNAP_THRESHOLD * 0.5) {
-      // Reset cooldown when stick is released so next flick fires immediately.
+      // Reset cooldown once stick returns to center so next flick is immediate.
       this._vrSnapCooldown = 0;
     }
   }
