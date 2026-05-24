@@ -72,6 +72,8 @@ class NetsplatSample extends NetSample {
     this._pendingTransfers = new Map();
     // Resolves when the initial CDN splats finish loading; set to null after.
     this._splatSetupPromise = null;
+    // VR snap-turn cooldown (seconds remaining before next snap is allowed).
+    this._vrSnapCooldown = 0;
   }
 
   getJoinOptions() {
@@ -160,6 +162,60 @@ class NetsplatSample extends NetSample {
     super.update(time, frame);
     this._stepBursts();
     this._updateFade(xb.getDeltaTime());
+    if (frame) this._updateVRLocomotion(frame);
+  }
+
+  _updateVRLocomotion(frame) {
+    const dt = xb.getDeltaTime();
+    if (!dt) return;
+    const cam = xb.core?.camera;
+    if (!cam) return;
+
+    const DEAD = 0.15;
+    const SNAP_THRESHOLD = 0.7;
+    const SNAP_ANGLE = Math.PI / 6; // 30° per flick
+    const SNAP_COOLDOWN = 0.4;      // seconds between snaps
+    const MOVE_SPEED = 2.5;         // m/s
+
+    let moveX = 0, moveY = 0, rawSnapX = 0;
+
+    for (const source of frame.session.inputSources) {
+      const gp = source.gamepad;
+      if (!gp?.axes) continue;
+      const ax = gp.axes;
+      // WebXR standard thumbstick: axes[2]=X, axes[3]=Y.
+      // Fall back to axes[0/1] for touchpad-only controllers (e.g. Vive Wand).
+      const stickX = Math.abs(ax[2] ?? 0) > 0.05 ? (ax[2] ?? 0) : (ax[0] ?? 0);
+      const stickY = Math.abs(ax[3] ?? 0) > 0.05 ? (ax[3] ?? 0) : (ax[1] ?? 0);
+
+      if (source.handedness === 'left') {
+        moveX = Math.abs(stickX) > DEAD ? stickX : 0;
+        moveY = Math.abs(stickY) > DEAD ? stickY : 0;
+      } else if (source.handedness === 'right') {
+        rawSnapX = stickX;
+      }
+    }
+
+    // Smooth movement: left thumbstick → walk in head-facing direction.
+    if (moveX || moveY) {
+      const fwd = new THREE.Vector3();
+      cam.getWorldDirection(fwd);
+      fwd.y = 0;
+      if (fwd.lengthSq() > 0.001) fwd.normalize();
+      const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
+      cam.position.addScaledVector(fwd, -moveY * MOVE_SPEED * dt);
+      cam.position.addScaledVector(right, moveX * MOVE_SPEED * dt);
+    }
+
+    // Snap turn: right thumbstick → 30° per flick with cooldown.
+    this._vrSnapCooldown -= dt;
+    if (Math.abs(rawSnapX) > SNAP_THRESHOLD && this._vrSnapCooldown <= 0) {
+      cam.rotateY(rawSnapX < 0 ? SNAP_ANGLE : -SNAP_ANGLE);
+      this._vrSnapCooldown = SNAP_COOLDOWN;
+    } else if (Math.abs(rawSnapX) <= SNAP_THRESHOLD * 0.5) {
+      // Reset cooldown when stick is released so next flick fires immediately.
+      this._vrSnapCooldown = 0;
+    }
   }
 
   _updateFade(dt) {
